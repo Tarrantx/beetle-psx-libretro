@@ -12,6 +12,11 @@ Notable additions in this fork are:
 * A Vulkan renderer, developed by TinyTiger;
 * PGXP perspective correct texturing and subpixel precision, developed by iCatButler;
 * OpenBIOS, allowing the emulator to be used without a BIOS file;
+* HD texture replacement caching overhaul (Vulkan renderer), see [HD_TEXTURE_CACHE.md](HD_TEXTURE_CACHE.md);
+
+## HD texture replacement caching
+
+This fork overhauls the Vulkan renderer's HD texture replacement pipeline so packs stay smooth on demanding content — particularly multi-palette animated sprites like Alucard in *Castlevania: Symphony of the Night*. It replaces the stock eager loader with lazy per-(texture, palette) loading and a three-tier, decode-once cache (VRAM images → RAM pixels → disk, LRU-evicted with default budgets of 3 GB VRAM / 2 GB RAM), binds cached textures in the same frame they're drawn to eliminate per-frame pop-in, and decodes on a 4-thread pool. The on-disk pack format and core options are unchanged. Full details: [HD_TEXTURE_CACHE.md](HD_TEXTURE_CACHE.md).
 
 ## Building
 
