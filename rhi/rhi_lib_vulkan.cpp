@@ -6484,6 +6484,10 @@ public:
     size_t size_bytes() const { return total_bytes; }
     size_t count() const { return index.size(); }
 
+    // Change the byte budget at runtime (from a core option); shrink now if lowered.
+    void set_budget(size_t bytes) { budget_bytes = bytes; evict(); }
+    size_t budget() const { return budget_bytes; }
+
 private:
     struct Entry {
         HdTextureId id;
@@ -6572,6 +6576,10 @@ public:
     size_t size_bytes() const { return total_bytes; }
     size_t count() const { return index.size(); }
 
+    // Change the byte budget at runtime (from a core option); shrink now if lowered.
+    void set_budget(size_t bytes) { budget_bytes = bytes; evict(); }
+    size_t budget() const { return budget_bytes; }
+
 private:
     struct Entry {
         HdTextureId id;
@@ -6615,8 +6623,15 @@ public:
 
 	void set_texture_uploader(Renderer *t);
 
+    // Runtime cache budgets (bytes), driven by core options.
+    void set_cache_budgets(size_t ram_bytes, size_t vram_bytes) {
+        hd_cache.set_budget(ram_bytes);
+        hd_gpu_cache.set_budget(vram_bytes);
+    }
+
     bool dump_enabled = false;
     bool hd_textures_enabled = false;
+    bool eager_textures = true; // true = prefetch all palettes of a hash on upload (master-consistent); false = lazy per-draw
 private:
     IOThread iothread;
     Renderer *uploader;
@@ -6853,6 +6868,14 @@ public:
 	void set_replace_textures(bool enable)
 	{
 		tracker.hd_textures_enabled = enable;
+	}
+	void set_hd_cache_budgets(size_t ram_bytes, size_t vram_bytes)
+	{
+		tracker.set_cache_budgets(ram_bytes, vram_bytes);
+	}
+	void set_eager_hd_textures(bool enable)
+	{
+		tracker.eager_textures = enable;
 	}
 
 	void set_adaptive_smoothing(bool enable)
@@ -17841,11 +17864,20 @@ void TextureTracker::upload(Rect rect, uint16_t *vram) {
     fused_pages.mark_dirty(rect);
     fused_pages.rebuild_dirty(tracker, uploader);
 
-    // HD replacements are now loaded lazily, per-palette, at draw time
-    // (request_hd_texture, called from get_hd_texture_index). We no longer
-    // eagerly queue every palette variant of this hash on upload, which used
-    // to cause load bursts/stutter for palette-cycled textures and big packs.
-    (void)preexisting;
+    // HD texture caching method:
+    //  - Lazy (eager_textures=false): nothing is queued here; each (hash,palette)
+    //    is loaded on demand when first drawn (request_hd_texture). Leanest.
+    //  - Eager (eager_textures=true, the master-consistent default): on the first
+    //    upload of a hash, prefetch ALL of its known palette variants into the
+    //    cache. Routed through want_combo so it still respects the cache
+    //    (decode-once / dedup) and the VRAM/RAM budgets, unlike stock Beetle's
+    //    raw load_hd_texture.
+    if (eager_textures && hd_textures_enabled && !preexisting) {
+        std::set<HdTextureId>::iterator lo = known_files.lower_bound({ upload->hash, 0 });
+        std::set<HdTextureId>::iterator hi = known_files.upper_bound({ upload->hash, 0xFFFFFFFF });
+        for (std::set<HdTextureId>::iterator it = lo; it != hi; it++)
+            want_combo({ upload->hash, it->palette_hash });
+    }
 }
 
 void TextureTracker::load_hd_texture(uint32_t hash) {
@@ -18238,9 +18270,10 @@ void TextureTracker::endFrame() {
             (unsigned long long)(dbg_responses_received - dbg_responses_received_last),
             (unsigned long long)(dbg_gpu_uploads - dbg_gpu_uploads_last),
             (unsigned long long)(dbg_attaches - dbg_attaches_last));
-        TT_LOG(RETRO_LOG_INFO, "[hdcache] ram %zu entries / %zu MB ; vram %zu entries / %zu MB\n",
-            hd_cache.count(), hd_cache.size_bytes() / (1024 * 1024),
-            hd_gpu_cache.count(), hd_gpu_cache.size_bytes() / (1024 * 1024));
+        TT_LOG(RETRO_LOG_INFO, "[hdcache] mode=%s ; ram %zu/%zu MB (%zu entries) ; vram %zu/%zu MB (%zu entries)\n",
+            eager_textures ? "eager" : "lazy",
+            hd_cache.size_bytes() / (1024 * 1024), hd_cache.budget() / (1024 * 1024), hd_cache.count(),
+            hd_gpu_cache.size_bytes() / (1024 * 1024), hd_gpu_cache.budget() / (1024 * 1024), hd_gpu_cache.count());
         dbg_responses_received_last = dbg_responses_received;
         dbg_gpu_uploads_last = dbg_gpu_uploads;
         dbg_attaches_last = dbg_attaches;
@@ -19032,6 +19065,9 @@ static dither_mode dither_mode = DITHER_NATIVE;
 static bool dump_textures = false;
 static bool replace_textures = false;
 static bool track_textures = false;
+static size_t hd_cache_vram_bytes = (size_t)3 * 1024 * 1024 * 1024; // 3 GB default (matches HD_CACHE_VRAM_BUDGET)
+static size_t hd_cache_ram_bytes  = (size_t)2 * 1024 * 1024 * 1024; // 2 GB default (matches HD_CACHE_RAM_BUDGET)
+static bool   eager_hd_textures   = true; // default eager (master-consistent); false = lazy
 /*
  * File-local copy of the crop_overscan core option, distinct
  * from the cross-TU `crop_overscan` global declared in
@@ -19548,6 +19584,18 @@ void rhi_vulkan_refresh_variables(void)
          replace_textures = false;
    }
 
+   var.key = BEETLE_OPT(hd_cache_vram_budget);
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      hd_cache_vram_bytes = (size_t)atoi(var.value) * 1024 * 1024;
+
+   var.key = BEETLE_OPT(hd_cache_ram_budget);
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      hd_cache_ram_bytes = (size_t)atoi(var.value) * 1024 * 1024;
+
+   var.key = BEETLE_OPT(hd_caching_method);
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      eager_hd_textures = (strcmp(var.value, "lazy") != 0); // "eager" (default) or "lazy"
+
    struct retro_core_option_display option_display;
    option_display.visible = track_textures;
 
@@ -19678,6 +19726,8 @@ void rhi_vulkan_finalize_frame(const void *fb, unsigned width,
    renderer->set_track_textures(track_textures);
    renderer->set_dump_textures(dump_textures);
    renderer->set_replace_textures(replace_textures);
+   renderer->set_hd_cache_budgets(hd_cache_ram_bytes, hd_cache_vram_bytes);
+   renderer->set_eager_hd_textures(eager_hd_textures);
    renderer->set_adaptive_smoothing(adaptive_smoothing);
    renderer->set_dither_native_resolution(dither_mode == DITHER_NATIVE);
    renderer->set_horizontal_overscan_cropping(vulkan_crop_overscan);

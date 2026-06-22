@@ -5,11 +5,11 @@
 A Beetle PSX HW fork that overhauls the Vulkan renderer's HD texture replacement
 pipeline for smooth, pop-in-free packs on demanding content — particularly
 multi-palette animated sprites like Alucard in *Castlevania: Symphony of the
-Night*. It replaces the stock eager loader with lazy per-(texture, palette)
-loading and a three-tier, decode-once cache (VRAM images → RAM pixels → disk,
-LRU-evicted with default budgets of 3 GB VRAM / 2 GB RAM), binds cached textures
-in the same frame they're drawn to eliminate per-frame pop-in, and decodes on a
-4-thread pool. The on-disk pack format and core options are unchanged.
+Night*. It adds a three-tier, decode-once cache (VRAM images → RAM pixels → disk,
+LRU-evicted), binds cached textures in the same frame they're drawn to eliminate
+per-frame pop-in, and decodes on a 4-thread pool. New core options choose the
+caching method — Eager (stock-Beetle default) or Lazy — and set the VRAM/RAM
+cache budgets (defaults 3 GB / 2 GB). The on-disk pack format is unchanged.
 
 ## Summary
 
@@ -19,17 +19,17 @@ This fork reworks the **HD texture replacement** pipeline in the Vulkan
 (e.g. Alucard in *Castlevania: Symphony of the Night*), where the stock
 implementation suffers persistent texture pop-in and load stalls.
 
-What's different from upstream (Vulkan backend only — the on-disk pack format and
-core options are unchanged):
+What's different from upstream (Vulkan backend only; the on-disk pack format is
+unchanged):
 
-- **Lazy, per-(texture, palette) loading.** A replacement is loaded only when
-  that specific texture+palette combination is actually drawn, instead of eagerly
-  loading every palette variant of a texture the moment it enters VRAM. Removes
-  the load burst when textures first appear.
+- **Selectable caching method (core option).** *Eager* (default, matches stock
+  Beetle) prefetches all palette variants of a texture when it enters VRAM;
+  *Lazy* loads only the specific texture+palette actually drawn, avoiding the
+  load burst for large multi-palette packs. Both feed the same cache below.
 - **Three-tier, decode-once cache.** A VRAM cache of ready-to-bind GPU images,
   backed by a RAM cache of decoded pixels, backed by disk. Each combination is
   read and decoded at most once; re-draws are free. Both tiers are LRU-evicted
-  with configurable budgets (default **3 GB VRAM / 2 GB RAM**).
+  with budgets exposed as **core options** (defaults **3 GB VRAM / 2 GB RAM**).
 - **Immediate in-frame binding.** A cached GPU image is bound on the *same* frame
   it's needed rather than one frame later — this eliminates the persistent
   per-frame pop-in that affected animated sprites even when their textures were
@@ -66,8 +66,10 @@ New members: `hd_gpu_cache`, `hd_cache`, `requested` (combos with an in-flight
 load or no file on disk — a negative cache), `pending_attach` (combos to bind at
 the next safe point), and `dbg_*` diagnostic counters.
 
-- **`upload()`** — removed the eager `load_hd_texture(hash)` call that queued
-  every palette variant of a texture on VRAM upload.
+- **`upload()`** — in *Lazy* mode, queues nothing here. In *Eager* mode (default),
+  prefetches all of the hash's palette variants via `want_combo` (so it still
+  respects the cache, dedup and budgets — unlike stock Beetle's raw
+  `load_hd_texture`).
 - **`want_combo(HdTextureId)`** *(new)* — queues a single disk load for one
   combination, skipping it if already cached, already requested, or absent from
   disk (inserted into `requested` as a permanent negative cache so missing files
@@ -112,9 +114,22 @@ the next safe point), and `dbg_*` diagnostic counters.
   each given its own heap-allocated `shared_ptr` to the channel; the destructor
   uses `scond_broadcast` to wake all workers for shutdown.
 
+### Core options
+
+- **HD Texture Caching Method** — `Eager` (default, stock-Beetle behaviour) or `Lazy`.
+- **HD Texture VRAM Cache Budget** — default 3 GB.
+- **HD Texture RAM Cache Budget** — default 2 GB.
+
+Budgets are runtime-adjustable (lowering one evicts immediately). The `[hdcache]`
+INFO log line shows the active mode and `used/budget` for each tier.
+
 ### Build
 
 Build the HW core as usual — `make HAVE_HW=1` — then optionally `strip` the
-resulting `mednafen_psx_hw_libretro.dll`. No new dependencies; the caches use
-only the C++ standard library plus the `stb_image` and libretro threading already
-vendored in the tree.
+result. No new dependencies; the caches use only the C++ standard library plus
+the `stb_image` and libretro threading already vendored in the tree.
+
+Built and tested on **Windows** (`mednafen_psx_hw_libretro.dll`, MSYS2/MinGW-w64)
+against **RetroArch 1.22.2** (git 69a4f0e, build date Nov 20 2025, Compiler:
+MinGW 10.2.0 64-bit). The source is cross-platform: the same `make HAVE_HW=1`
+yields a `.so` on Linux and a `.dylib` on macOS.
