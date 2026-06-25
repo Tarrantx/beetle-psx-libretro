@@ -43,6 +43,26 @@ unchanged):
 Packs are authored exactly as before: textures live in
 `<content>-texture-replacements/`, named `<texturehash>-<palettehash>.png`.
 
+### Dump filename convention
+
+When dumping, the palette-hash part of the filename follows a small convention so
+that every dumped file maps back to what the loader looks up:
+
+- `<hash>-<palettehash>.png` — a paletted texture with its palette captured (the
+  normal case).
+- `<hash>-0.png` — a texture with no palette (direct-colour, ABGR1555). The loader
+  treats "no palette" as palette hash `0`, so these now round-trip. *(Previously
+  such textures were dumped as `<hash>.png`, which never matched on load.)*
+- `<hash>-missing.png` — a paletted texture whose palette was **not** resident in
+  VRAM when it was captured, so it was dumped as grayscale index data. This is a
+  diagnostic, not a usable replacement: the loader never asks for `-missing`, so
+  these files are deliberately not loaded back. The proper
+  `<hash>-<palettehash>.png` version is captured separately once the palette is
+  present.
+
+The same convention applies to the page-aligned packs (see `PAGE_ALIGN.md`), with
+the page hash in place of the texture hash.
+
 ## Technical detail
 
 All changes are in `rhi/rhi_lib_vulkan.cpp` (the texture system is compiled only
