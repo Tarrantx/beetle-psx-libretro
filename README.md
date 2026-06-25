@@ -13,13 +13,38 @@ Notable additions in this fork are:
 * PGXP perspective correct texturing and subpixel precision, developed by iCatButler;
 * OpenBIOS, allowing the emulator to be used without a BIOS file;
 * HD texture replacement caching overhaul (Vulkan renderer), see [HD_TEXTURE_CACHE.md](HD_TEXTURE_CACHE.md);
+* Page-aligned texture dumping & replacement (Vulkan renderer), see [PAGE_ALIGN.md](PAGE_ALIGN.md);
 
 ## HD texture replacement caching
 
-This fork overhauls the Vulkan renderer's HD texture replacement pipeline so packs stay smooth on demanding content — particularly multi-palette animated sprites like Alucard in *Castlevania: Symphony of the Night*. It adds a three-tier, decode-once cache (VRAM images → RAM pixels → disk, LRU-evicted), binds cached textures in the same frame they're drawn to eliminate per-frame pop-in, and decodes PNGs on a 4-thread pool. New core options let you choose the **caching method** — *Eager* (the stock-Beetle default: prefetch all of a texture's palettes) or *Lazy* (load each texture+palette on demand) — and set the **VRAM/RAM cache budgets** (defaults 3 GB / 2 GB). The on-disk pack format is unchanged. Full details: [HD_TEXTURE_CACHE.md](HD_TEXTURE_CACHE.md).
+This fork overhauls the Vulkan renderer's HD texture replacement pipeline so packs stay smooth on demanding content — particularly multi-palette animated sprites like Alucard in *Castlevania: Symphony of the Night*. At its core is a three-tier, decode-once cache (VRAM images → RAM pixels → disk, LRU-evicted). New core options let you choose the **caching method** — *Eager* (the stock-Beetle default: prefetch all of a texture's palettes), *Lazy* (load each texture+palette on demand, in the background), or *Lazy (synchronous)* (also on demand, but blocks until ready: no pop-in, may briefly stutter when many new textures appear at once) — and set the **VRAM/RAM cache budgets** (defaults 3 GB / 2 GB). The on-disk pack format is unchanged. The internal mechanics that keep it smooth are described under **Under the hood**. Full details: [HD_TEXTURE_CACHE.md](HD_TEXTURE_CACHE.md).
 
 Tested with **RetroArch 1.22.2** (git 69a4f0e, build date Nov 20 2025, Compiler: MinGW 10.2.0 64-bit) on Windows.
 <img width="1726" height="436" alt="BeetleVRAM" src="https://github.com/user-attachments/assets/6d39bed5-8ead-4b3e-af27-c056e3513818" />
+
+## Page-aligned texture dumping & replacement
+
+An optional dumping/replacement mode that works at whole VRAM **texture-page** granularity — one clean 256×256 tile per page — instead of the default per-upload rectangles, addressing the fragmented "sections" produced by the stock dumper ([libretro/beetle-psx-libretro#918](https://github.com/libretro/beetle-psx-libretro/issues/918)). It is controlled by two independent core options, each *Upload-rect (default)* or *Page-aligned*:
+
+* **HD Dump Mode** — how textures are dumped.
+* **HD Replacement Mode** — how replacements are looked up.
+
+Page-aligned packs use their own folders (`<game>-texture-dump-pages/`, `<game>-texture-replacements-pages/`) so they never collide with upload-rect packs — the two are not interchangeable. The mode reuses the same three-tier cache and loader as the HD caching system above, with no shader changes. It suits static, reused art (backgrounds, UI, 3D games); upload-rect remains better for animated multi-palette sprites, and since the two sides are independent you can pick per game. Default behaviour is unchanged. Full details: [PAGE_ALIGN.md](PAGE_ALIGN.md).
+
+## Texture folder location
+
+By default, dump and replacement folders are created next to the loaded content (`<game>-texture-dump/` and friends). A new **HD Texture Folder** core option can instead place them under RetroArch's **System** or **Save** directory — a single central location for every game's packs, each game keeping its own `<name>-…` subfolder. Point that directory wherever you like in RetroArch's *Settings → Directory*.
+
+The required folders are also **created automatically** when texture dumping or replacement is enabled and a game is running, so there's no need to make them by hand first.
+
+## Under the hood
+
+These changes have no core options of their own but shape how the HD texture system behaves:
+
+* **Same-frame binding** — a cached GPU texture is bound on the *same* frame it's needed rather than one frame later, removing the persistent per-frame pop-in that affected animated sprites even when their textures were already cached.
+* **Multithreaded decode** — PNG decode + mipmap generation runs on a 4-thread worker pool instead of one thread, so first-appearance loads land faster.
+* **IO priority queue** — on-demand loads (textures needed this frame) jump ahead of background work (prefetch, dumps, save-state warm-up), so a burst of background loading can't stall textures about to be drawn.
+* **Diagnostics** — an `[hdcache]` line is written to the RetroArch INFO log periodically (decodes / GPU uploads / binds, cache occupancy, active caching + replacement mode, page-mode counters) for tuning.
 
 ## Building
 
