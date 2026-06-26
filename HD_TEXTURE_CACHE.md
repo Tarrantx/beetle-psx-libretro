@@ -143,6 +143,18 @@ the next safe point), and `dbg_*` diagnostic counters.
 Budgets are runtime-adjustable (lowering one evicts immediately). The `[hdcache]`
 INFO log line shows the active mode and `used/budget` for each tier.
 
+### Hotkeys
+
+These require RetroArch to be in **Game Focus** mode (default: Scroll Lock) so the
+core receives raw keyboard input:
+
+- **`]`** — toggle HD texture replacements on/off live, with an on-screen
+  `HD texture replacements: ON/OFF` message. Useful for quick before/after
+  comparison. The toggle persists until you next change the **Replace Textures**
+  core option in the menu (which re-syncs it).
+- **`'`** — reload texture replacements from disk, to pick up edited or newly
+  added files without restarting the content.
+
 ### Build
 
 Build the HW core as usual — `make HAVE_HW=1` — then optionally `strip` the

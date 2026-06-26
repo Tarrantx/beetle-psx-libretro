@@ -17343,6 +17343,7 @@ bool write_image(const char *path, int width, int height, const void *data) {
 /* === dbg_input_callback.h (extern, defined in libretro.c) === */
 
 extern retro_input_state_t dbg_input_state_cb;
+extern "C" retro_environment_t environ_cb; /* defined in libretro.c (C linkage); declared early so endFrame() can post an OSD message */
 
 
 /* === texture_tracker.cpp === */
@@ -19036,6 +19037,12 @@ void TextureTracker::endFrame() {
         if (hd_toggle_key.query()) {
             hd_textures_enabled = !hd_textures_enabled;
             TT_LOG_VERBOSE(RETRO_LOG_INFO, "Toggling hd textures: %s\n", hd_textures_enabled ? "on" : "off");
+            if (environ_cb) {
+                struct retro_message msg;
+                msg.msg    = hd_textures_enabled ? "HD texture replacements: ON" : "HD texture replacements: OFF";
+                msg.frames = 120; // ~2s at 60fps
+                environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &msg);
+            }
         }
 
         if (reload_key.query()) {
@@ -20493,7 +20500,14 @@ void rhi_vulkan_finalize_frame(const void *fb, unsigned width,
 
    renderer->set_track_textures(track_textures);
    renderer->set_dump_textures(dump_textures);
-   renderer->set_replace_textures(replace_textures);
+   // Apply the Replace Textures option only when it actually changes, so the
+   // in-game ']' toggle (see TextureTracker::endFrame) isn't re-stamped back to
+   // the menu value every frame. A menu change still re-applies and re-syncs.
+   static int replace_textures_applied = -1; // -1 = force the first apply
+   if ((int)replace_textures != replace_textures_applied) {
+      renderer->set_replace_textures(replace_textures);
+      replace_textures_applied = replace_textures;
+   }
    renderer->set_hd_cache_budgets(hd_cache_ram_bytes, hd_cache_vram_bytes);
    renderer->set_eager_hd_textures(eager_hd_textures);
    renderer->set_lazy_sync_textures(lazy_sync_hd_textures);
