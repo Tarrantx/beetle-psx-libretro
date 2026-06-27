@@ -133,6 +133,11 @@ the next safe point), and `dbg_*` diagnostic counters.
 - **`IOThread`** — the constructor spawns `NUM_IO_THREADS` (4) detached workers,
   each given its own heap-allocated `shared_ptr` to the channel; the destructor
   uses `scond_broadcast` to wake all workers for shutdown.
+- **Off-thread dump decode** — texture/page *dumping* also runs on this pool. The
+  render thread only snapshots the raw VRAM words + palette into the request; the
+  worker does the index→RGBA decode *and* the PNG encode. This keeps a burst of
+  first-seen textures (especially under **HD Dump Mode = Both**) from stalling the
+  render thread. The decoded output is unchanged, so existing dumps still round-trip.
 
 ### Core options
 
@@ -142,6 +147,10 @@ the next safe point), and `dbg_*` diagnostic counters.
 
 Budgets are runtime-adjustable (lowering one evicts immediately). The `[hdcache]`
 INFO log line shows the active mode and `used/budget` for each tier.
+
+The **HD Dump Mode** / **HD Replacement Mode** options — including `Both` dumping and
+the cross-mode replacement **fallback** — are documented in
+[`PAGE_ALIGN.md`](PAGE_ALIGN.md).
 
 ### Hotkeys
 

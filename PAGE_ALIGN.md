@@ -17,10 +17,15 @@ built under `TEXTURE_DUMPING_ENABLED`).
 
 ## Compatibility model
 
-Two independent core options, each `{upload_rect (default), page_aligned}`:
+Two independent core options:
 
-- `beetle_psx_hw_hd_dump_mode`        — how textures are **dumped**.
-- `beetle_psx_hw_hd_replacement_mode` — how replacements are **looked up**.
+- `beetle_psx_hw_hd_dump_mode`        — how textures are **dumped**: `{upload_rect (default), page_aligned, both}`.
+- `beetle_psx_hw_hd_replacement_mode` — how replacements are **looked up**: `{upload_rect (default), page_aligned}`.
+
+`hd_dump_mode = both` writes **both** pack types in a single playthrough (to their two
+separate folders below), so you don't have to replay the game once per mode. The two
+dumps are independent and deduplicated; the decode/encode runs on the IO worker pool,
+so dumping both at once doesn't stall the render thread.
 
 Each mode uses its own folders so the two pack types never collide (the same
 filename does **not** mean the same texture between them):
@@ -38,6 +43,26 @@ hash is computed over a different region of VRAM.
 The folder *location* honours the **HD Texture Folder** core option
 (`beetle_psx_hw_texture_directory`: content / system / save directory), and the
 folders are created automatically when dumping/replacement is enabled.
+
+## Cross-mode replacement fallback
+
+`beetle_psx_hw_hd_replacement_fallback` (`{disabled (default), enabled}`) lets the two
+replacement modes back each other up rather than being strictly one-or-the-other. When
+the **active** `hd_replacement_mode` finds no match for a draw, the renderer checks the
+**other** mode's pack before falling back to native:
+
+- in **upload-rect** mode, a miss is retried against the page-aligned (`-pages`) pack;
+- in **page-aligned** mode, a miss is retried against the upload-rect pack.
+
+So you can pick whichever mode fits the bulk of a game and let the other cover the
+exceptions — e.g. a mostly page-aligned pack for the static art, with a handful of
+upload-rect textures filling in animated sprites — without converting anything. It is
+**off by default**, costs nothing on a hit, and only does the extra lookup on a genuine
+miss (best paired with **Lazy** caching, so the fallback's loads stay on demand).
+
+Internally both packs share the one three-tier cache; a 1-bit discriminator on the
+cache key namespaces page vs upload-rect entries so they can never alias, even on a
+32-bit hash collision.
 
 ## How it works
 
@@ -65,12 +90,15 @@ machinery as-is.
 
 ### Dump
 
-When `hd_dump_mode = page_aligned`, a textured draw decodes the **full** page from
-the mirror via its palette (same conversion as the upload-rect dumper) and queues a
-low-priority PNG write to `<cd>-texture-dump-pages/<pagehash>-<palettehash>.png`,
-deduplicated per `(page_hash, palette_hash)`. Files named `…-missing.png` mean the
-palette wasn't resident when the page was captured (grayscale index data, not a
-usable replacement); `…-0.png` is a genuine palette-less (ABGR1555) texture.
+When `hd_dump_mode = page_aligned` (or `both`), a textured draw snapshots the **full**
+page's raw VRAM words + palette and queues a low-priority dump request for
+`<cd>-texture-dump-pages/<pagehash>-<palettehash>.png`, deduplicated per
+`(page_hash, palette_hash)`. The palette→RGBA decode (same conversion as the
+upload-rect dumper) and the PNG encode then run on the **IO worker pool**, not the
+render thread, so a burst of first-seen pages — or dumping both pack types at once
+under `both` — doesn't stall input. Files named `…-missing.png` mean the palette
+wasn't resident when the page was captured (grayscale index data, not a usable
+replacement); `…-0.png` is a genuine palette-less (ABGR1555) texture.
 
 ### Match + binding
 
@@ -113,6 +141,13 @@ Build the HW core as usual (`make HAVE_HW=1`, then optionally `strip`).
 **Dump page tiles:** enable **Track Textures** + **Dump Textures**, set **HD Dump
 Mode = Page-aligned**, run the game, and inspect `<cd>-texture-dump-pages/` (compare
 the clean tiles against the old `<cd>-texture-dump/` fragments).
+
+**Dump both at once:** set **HD Dump Mode = Both** to populate `<cd>-texture-dump/`
+*and* `<cd>-texture-dump-pages/` in one playthrough, then decide which to work from.
+
+**Mix packs:** to use a page-aligned pack but cover its gaps from an upload-rect pack
+(or vice versa), enable **HD Replacement Cross-Mode Fallback** alongside your chosen
+**HD Replacement Mode**.
 
 **Use replacements:** put edited tiles in `<cd>-texture-replacements-pages/` (keep
 dimensions a power-of-two multiple of 256, e.g. 256/512/1024 square), enable **Track
