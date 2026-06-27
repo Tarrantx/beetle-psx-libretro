@@ -534,12 +534,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       BEETLE_OPT(hd_dump_mode),
       "HD Dump Mode",
       NULL,
-      "How dumped textures are laid out (experimental). 'Upload-rect' (default) dumps each tracked upload to <cd>-texture-dump/ (matches stock Beetle). 'Page-aligned' dumps whole VRAM texture pages to <cd>-texture-dump-pages/ for cleaner tiles. Page packs are NOT interchangeable with upload-rect packs (the hash covers a different region).",
+      "How dumped textures are laid out (experimental). 'Upload-rect' (default) dumps each tracked upload to <cd>-texture-dump/ (matches stock Beetle). 'Page-aligned' dumps whole VRAM texture pages to <cd>-texture-dump-pages/ for cleaner tiles. 'Both' dumps to both folders simultaneously, so a single playthrough collects both pack types (folders stay separate; pick which to edit afterwards). Page packs are NOT interchangeable with upload-rect packs (the hash covers a different region).",
       NULL,
       "video",
       {
          { "upload_rect",  "Upload-rect (match master)" },
          { "page_aligned", "Page-aligned (experimental)" },
+         { "both",         "Both (dump to both folders)" },
          { NULL, NULL },
       },
       "upload_rect"
@@ -587,6 +588,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "upload_rect"
+   },
+   {
+      BEETLE_OPT(hd_replacement_fallback),
+      "HD Replacement Cross-Mode Fallback",
+      NULL,
+      "On an HD texture miss in the active HD Replacement Mode, also check the OTHER mode's folder before falling back to native. Works both ways: an upload-rect pack can fill gaps from a page-aligned pack and vice-versa, without converting packs. Best with the Lazy caching method.",
+      NULL,
+      "video",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
    },
    {
       BEETLE_OPT(hd_caching_method),
