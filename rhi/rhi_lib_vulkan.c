@@ -10029,7 +10029,7 @@ static void renderer_build_attribs(Renderer *self, BufferVertex *output, const V
    bool *filtering_out, bool *scaled_read_out, unsigned *shift_out, bool *offset_uv_out){
       int16_t param;
       float z;
-   unsigned shift; bool filtering, scaled_read, offset_uv; HdTextureHandle hd_texture_index; /* local working copies; written back to *_out at function end */
+   unsigned shift; bool filtering, scaled_read, offset_uv; HdTextureHandle hd_texture_index = hd_handle_make_none(); /* local working copies; written back to *_out at function end. hd_texture_index MUST be initialised: it is only assigned for textured primitives (hd_texture_vram.height > 0); untextured draws would otherwise write back an uninitialised garbage HD handle (benign zeros at -O0, real garbage at -O3 -> bogus handles -> stale-handle flood and crashes). */
    switch (self->render_state.texture_mode)
    {
    case TextureMode_Palette4bpp:
@@ -22292,6 +22292,17 @@ static int64_t page_bytes(FusionRects *fusion)
       /* Make a new fused page */
       TT_LOG_VERBOSE(RETRO_LOG_INFO, "Creating new fused page for palette %x\n", palette);
 
+      /* `page` is a raw stack FusedPage: its handle/heap-owning members MUST be
+       * initialised before rebuild_page reads them. rebuild_page checks
+       * ih_is_valid(&page->texture) (so texture must be a NULL handle, not garbage)
+       * and compares page->fusion via fusionrects_eq (so fusion.rects must be a
+       * valid empty vec). Leaving them uninitialised reads as zero at -O0 (safe) but
+       * garbage at -O3 (texture.data=0xffffffff -> ih_is_valid true -> deref crash). */
+      page.texture = ih_make(NULL);
+      fp_init_raw(&page); /* fusion.rects -> empty */
+      page.fusion.vram_rect = make_rect(0, 0, 0, 0);
+      page.fusion.scaleX = 0;
+      page.fusion.scaleY = 0;
       page.dead = false;
       page.dirty = false;
       page.full_page_rect = page_rect;
